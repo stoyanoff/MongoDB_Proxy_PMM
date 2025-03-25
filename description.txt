@@ -1,0 +1,105 @@
+1st message:
+{
+  "isMaster": 1,
+  "helloOk": true,
+  "compression": [],
+  "client": {
+    "driver": {
+      "name": "mongo-go-driver",
+      "version": "1.17.1"
+    },
+    "os": {
+      "type": "linux",
+      "architecture": "amd64"
+    },
+    "platform": "go1.23.2"
+  }
+}
+
+to
+
+{
+  "isMaster": 1,
+  "compression": [],
+  "client": {
+    "driver": {
+      "name": "mongo-go-driver",
+      "version": "1.17.1"
+    },
+    "os": {
+      "type": "linux",
+      "architecture": "amd64"
+    },
+    "platform": "go1.23.2"
+  },
+  "topologyVersion": {
+    "processId": "000000000000000000000000",
+    "counter": 0
+  },
+  "maxAwaitTimeMS": 1000
+}
+
+2nd message:
+{
+  "saslContinue": 1,
+  "conversationId": 1,
+  "payload": "c=biws,r=X3QuRhfrHONfMqp8Us1Cl1Gi5reJFbfLxDJFuZCxkEUZ+WVQXlHYBuVoRvRhLjyQ,p=GSsoUmWUa/PHvICF/IaNy271f+KWsQi8CzlHmuvN5zE=",
+  "$db": "admin"
+}
+
+3rd message:
+{
+  "ping": 1,
+  "lsid": {
+    "id": {
+      "$binary": {
+        "base64": "ExG0jqvoQfOeS9MMvhYfRA==",
+        "subType": "04"
+      }
+    }
+  },
+  "$db": "admin"
+}
+
+4th message:
+{
+  "buildInfo": 1,
+  "lsid": {
+    "id": {
+      "$binary": {
+        "base64": "ExG0jqvoQfOeS9MMvhYfRA==",
+        "subType": "04"
+      }
+    }
+  },
+  "$db": "admin"
+}
+
+5th message:
+{
+  "hello": 1,
+  "lsid": {
+    "id": {
+      "$binary": {
+        "base64": "ExG0jqvoQfOeS9MMvhYfRA==",
+        "subType": "04"
+      }
+    }
+  },
+  "$db": "admin"
+}
+
+6th message:
+{
+  "endSessions": [
+    {
+      "id": {
+        "$binary": {
+          "base64": "ExG0jqvoQfOeS9MMvhYfRA==",
+          "subType": "04"
+        }
+      }
+    }
+  ],
+  "$db": "admin"
+}

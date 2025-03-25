@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+import socket
+import struct
+import logging
+import time
+import threading
+import json
+from bson import BSON, ObjectId, Int64
+from bson.binary import Binary
+
+# ----------------- Helper Functions -----------------
+
+class BSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, ObjectId):
+            return str(o)
+        if isinstance(o, Int64):
+            return int(o)
+        if isinstance(o, Binary):
+            return o.hex()
+        return super().default(o)
+
+def decode_bson_to_json(raw_bson: bytes) -> str:
+    try:
+        doc = BSON(raw_bson).decode()
+        return json.dumps(doc, indent=2, cls=BSONEncoder)
+    except Exception as e:
+        return f"Error decoding BSON: {e}"
+
+# ----------------- MongoProxy Class -----------------
+
+class MongoProxy:
+    def __init__(self):
+        self.timeout = 3.0          # seconds
+        self.max_retries = 2
+        self.connection_timeout = 1.0  # seconds
+        self.buffer_size = 8192
+
+    def connect_with_retries(self):
+        for attempt in range(self.max_retries):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self.connection_timeout)
+                sock.connect(("localhost", 27017))
+                sock.settimeout(self.timeout)
+                return sock
+            except socket.timeout as e:
+                logger.error(f"Connection attempt {attempt+1} timed out: {e}")
+                if attempt == self.max_retries - 1:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+            except Exception as e:
+                logger.error(f"Connection failed: {e}")
+                raise
+
+    def recv_all(self, sock, n):
+        data = b''
+        while len(data) < n:
+            chunk = sock.recv(n - len(data))
+            if not chunk:
+                break
+            data += chunk
+        return data
+
+    def process_message(self, client_sock, mongo_sock, header):
+        try:
+            if len(header) < 16:
+                raise ValueError("Incomplete header received")
+            msg_length, request_id, response_to, op_code = struct.unpack("<iiii", header)
+            remaining = msg_length - 16
+
+            body = self.recv_all(client_sock, remaining)
+            if len(body) != remaining:
+                raise ValueError("Incomplete message received")
+
+            new_header = header
+            new_body = body
+
+            if op_code in (2004, 2013):
+                flags = body[:4]
+                query_start = 4
+                if op_code == 2004:
+                    collection_end = body.find(b'\x00', 4)
+                    if collection_end != -1:
+                        query_start = collection_end + 1 + 4 + 4
+                elif op_code == 2013 and len(body) >= 5:
+                    section_kind = body[4]
+                    if section_kind == 0:
+                        query_start = 5
+
+                query_doc = body[query_start:]
+                try:
+                    decoded = BSON(query_doc).decode()
+                    if "hello" in decoded:
+                        # Rebuild document: remove "hello" and "helloOk", set "isMaster": 1 as first key.
+                        decoded.pop("hello")
+                        if "helloOk" in decoded:
+                            decoded.pop("helloOk")
+                        new_doc = {"isMaster": 1}
+                        if "topologyVersion" not in decoded:
+                            new_doc["topologyVersion"] = {
+                                "processId": ObjectId("000000000000000000000000"),
+                                "counter": Int64(0)
+                            }
+                        if "maxAwaitTimeMS" not in decoded:
+                            new_doc["maxAwaitTimeMS"] = 1000
+                        for key, value in decoded.items():
+                            new_doc[key] = value
+                        decoded = new_doc
+                        modified_doc = BSON.encode(decoded)
+                        new_body = body[:query_start] + modified_doc
+                        new_msg_length = 16 + len(new_body)
+                        new_header = struct.pack("<iiii", new_msg_length, request_id, response_to, op_code)
+                except Exception as e:
+                    logger.error(f"Decoding error in process_message: {e}")
+
+            mongo_sock.sendall(new_header + new_body)
+
+            resp_header = self.recv_all(mongo_sock, 16)
+            if len(resp_header) != 16:
+                raise ValueError("Incomplete response header")
+            resp_length = struct.unpack("<i", resp_header[:4])[0]
+            resp_body = self.recv_all(mongo_sock, resp_length - 16)
+            if len(resp_body) != resp_length - 16:
+                raise ValueError("Incomplete response body")
+            client_sock.sendall(resp_header + resp_body)
+        except Exception as e:
+            logger.error(f"Message processing failed: {e}")
+            raise
+
+    def handle_connection(self, client_sock, addr):
+        mongo_sock = None
+        try:
+            client_sock.settimeout(self.timeout)
+            mongo_sock = self.connect_with_retries()
+            logger.info(f"Connected to MongoDB for client {addr}")
+
+            while True:
+                header = self.recv_all(client_sock, 16)
+                if not header or len(header) < 16:
+                    break
+                self.process_message(client_sock, mongo_sock, header)
+        except Exception as e:
+            logger.error(f"Connection error with {addr}: {e}")
+        finally:
+            if mongo_sock:
+                mongo_sock.close()
+            client_sock.close()
+            logger.info(f"Connection with {addr} closed")
+
+# ----------------- Logging Setup -----------------
+
+logger = logging.getLogger("MongoProxy")
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+# File handler (optional)
+try:
+    file_handler = logging.FileHandler('/var/log/mongo_proxy.log')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+except Exception:
+    pass
+
+# Console handler
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
+# ----------------- Start Proxy -----------------
+
+def start_proxy(host="0.0.0.0", port=27018):
+    proxy = MongoProxy()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.bind((host, port))
+        server_sock.listen(10)
+        logger.info(f"MongoDB compatibility proxy started on {host}:{port}")
+
+        try:
+            while True:
+                client_sock, addr = server_sock.accept()
+                logger.info(f"New connection from {addr[0]}:{addr[1]}")
+                thread = threading.Thread(target=proxy.handle_connection, args=(client_sock, addr), daemon=True)
+                thread.start()
+        except KeyboardInterrupt:
+            logger.info("Proxy stopped by user")
+        except Exception as e:
+            logger.error(f"Server error: {e}")
+
+if __name__ == "__main__":
+    start_proxy()
