@@ -5,8 +5,9 @@ import logging
 import time
 import threading
 import json
+import uuid
 from bson import BSON, ObjectId, Int64
-from bson.binary import Binary
+from bson.binary import Binary, STANDARD
 
 # ----------------- Helper Functions -----------------
 
@@ -133,6 +134,18 @@ class MongoProxy:
                 try:
                     decoded = BSON(query_doc).decode()
                     if "hello" in decoded:
+                        if "lsid" in decoded:
+                            lsid = decoded["lsid"]
+                            if isinstance(lsid, dict) and "id" in lsid:
+                                old_id = lsid["id"]
+                                if isinstance(old_id, Binary) and old_id.subtype != STANDARD:
+                                    logger.debug("Fixing lsid.id from deprecated UUID format")
+                                    lsid["id"] = Binary(old_id, subtype=STANDARD)
+                        if "lsid" not in decoded:
+                            decoded["lsid"] = {
+                                "id": Binary(uuid.uuid4().bytes, subtype=STANDARD)
+                            }
+                            logger.debug("Injected compliant lsid.id with UUID subtype 4")
                         logger.debug("Found 'hello' field; rewriting document.")
                         # Remove the "hello" field and rebuild the document with "isMaster" as the first key.
                         decoded.pop("hello")
