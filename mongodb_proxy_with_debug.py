@@ -6,8 +6,8 @@ import time
 import threading
 import json
 import uuid
-from bson import BSON, ObjectId, Int64
-from bson.binary import Binary, STANDARD
+from bson import BSON, ObjectId, Int64, STANDARD
+from bson.binary import Binary, STANDARD, OLD_UUID_SUBTYPE
 
 # ----------------- Helper Functions -----------------
 
